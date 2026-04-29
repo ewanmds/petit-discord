@@ -1,4 +1,4 @@
-# PetitDiscord
+# PetitDiscord : https://github.com/ewanmds/petit-discord/tree/main/petit_discord
 
 #Q1 On utilise Process.monitor/1 dans handle_call({:rejoindre, pid}, ...) 
     afin que le salon soit notifié automatiquement si ce client meurt par exexmple par un crash, fermeture ou kill du processus, le genServeur reçoit alors un message {:DOWN, ...} et peut retirer ce pid de sa liste sans attendre un quitter explicite.
