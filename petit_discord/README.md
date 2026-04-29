@@ -13,6 +13,15 @@ Boradcast est un cast car l'on veut juste déclencher l'evoie du message à tous
 #2-4 Oui, le salon redémarre après le kill. C’est parce qu’il est démarré comme enfant du superviseur dans lib/petit_discord.ex, via le DynamicSupervisor nommé MiniDiscord.SalonSupervisor. Quand on tu le processus du salon, le superviseur détecte sa mort et le relance automatiquement. Le salon repart avec un nouvel état en mémoire, donc sa liste de clients est réinitialisée.
 
 #2-5 La stratégie one_for_one redémarre uniquement le processus qui a planté.
-    La stratégie one_for_all redémarre tous les enfanst des supervisseurs dèq qu'un seul tombe.
+    La stratégie one_for_all redémarre tous les enfants des supervisseurs dès qu'un seul tombe.
 
+Bonus — Authentification par mot de passe :
+
+Pour le bonus du mot de passe, on peut créer le salon général et ajouter un password haché via ces deux commandes, 
+une autre amélioration possible demandé aurait été la création du mot de passe à la création du salon.
+DynamicSupervisor.start_child(MiniDiscord.SalonSupervisor, {MiniDiscord.Salon, "general"})
+MiniDiscord.Salon.definir_password("general", "mon_mdp")
+
+
+FIN
 

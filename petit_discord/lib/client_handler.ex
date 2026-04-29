@@ -50,22 +50,19 @@ defmodule MiniDiscord.ClientHandler do
   end
 
   defp rejoindre_salon(socket, pseudo, salon) do
-    case Registry.lookup(MiniDiscord.Registry, salon) do
-      [] ->
-        DynamicSupervisor.start_child(
-          MiniDiscord.SalonSupervisor,
-          {MiniDiscord.Salon, salon}
-        )
+    preparer_salon(salon)
 
-      _ ->
-        :ok
+    case rejoindre_avec_authentification(socket, salon) do
+      :ok ->
+        MiniDiscord.Salon.broadcast(salon, " #{pseudo} a rejoint ##{salon}\r\n")
+        :gen_tcp.send(socket, "Tu es dans ##{salon} — écris tes messages !\r\n")
+
+        loop(socket, pseudo, salon)
+
+      {:error, reason} ->
+        Logger.info("Client déconnecté pendant l'accès au salon #{salon} : #{inspect(reason)}")
+        liberer_pseudo(pseudo)
     end
-
-    MiniDiscord.Salon.rejoindre(salon, self())
-    MiniDiscord.Salon.broadcast(salon, "📢 #{pseudo} a rejoint ##{salon}\r\n")
-    :gen_tcp.send(socket, "Tu es dans ##{salon} — écris tes messages !\r\n")
-
-    loop(socket, pseudo, salon)
   end
 
   defp loop(socket, pseudo, salon) do
@@ -86,9 +83,11 @@ defmodule MiniDiscord.ClientHandler do
 
           :quit ->
             Logger.info("Client #{pseudo} a quitté via /quit")
-            MiniDiscord.Salon.broadcast(salon, "👋 #{pseudo} a quitté ##{salon}\r\n")
+            :gen_tcp.send(socket, "Tu quittes MiniDiscord, à bientôt #{pseudo} !\r\n")
+            MiniDiscord.Salon.broadcast(salon, " #{pseudo} a quitté ##{salon}\r\n")
             MiniDiscord.Salon.quitter(salon, self())
             liberer_pseudo(pseudo)
+            :gen_tcp.close(socket)
         end
 
       {:error, :timeout} ->
@@ -96,7 +95,7 @@ defmodule MiniDiscord.ClientHandler do
 
       {:error, reason} ->
         Logger.info("Client déconnecté : #{inspect(reason)}")
-        MiniDiscord.Salon.broadcast(salon, "👋 #{pseudo} a quitté ##{salon}\r\n")
+        MiniDiscord.Salon.broadcast(salon, " #{pseudo} a quitté ##{salon}\r\n")
         MiniDiscord.Salon.quitter(salon, self())
         liberer_pseudo(pseudo)
     end
@@ -123,24 +122,20 @@ defmodule MiniDiscord.ClientHandler do
             {:continue, salon}
 
           true ->
-            MiniDiscord.Salon.broadcast(salon, "👋 #{pseudo} a quitté ##{salon}\r\n")
-            MiniDiscord.Salon.quitter(salon, self())
+            preparer_salon(nouveau_salon)
 
-            case Registry.lookup(MiniDiscord.Registry, nouveau_salon) do
-              [] ->
-                DynamicSupervisor.start_child(
-                  MiniDiscord.SalonSupervisor,
-                  {MiniDiscord.Salon, nouveau_salon}
-                )
+            case rejoindre_avec_authentification(socket, nouveau_salon) do
+              :ok ->
+                MiniDiscord.Salon.broadcast(salon, " #{pseudo} a quitté ##{salon}\r\n")
+                MiniDiscord.Salon.quitter(salon, self())
+                MiniDiscord.Salon.broadcast(nouveau_salon, " #{pseudo} a rejoint ##{nouveau_salon}\r\n")
+                :gen_tcp.send(socket, "Tu es passé dans ##{nouveau_salon}\r\n")
+                {:continue, nouveau_salon}
 
-              _ ->
-                :ok
+              {:error, reason} ->
+                Logger.info("Client déconnecté pendant le changement de salon : #{inspect(reason)}")
+                {:continue, salon}
             end
-
-            MiniDiscord.Salon.rejoindre(nouveau_salon, self())
-            MiniDiscord.Salon.broadcast(nouveau_salon, "📢 #{pseudo} a rejoint ##{nouveau_salon}\r\n")
-            :gen_tcp.send(socket, "Tu es passé dans ##{nouveau_salon}\r\n")
-            {:continue, nouveau_salon}
         end
 
       "/quit" ->
@@ -155,12 +150,63 @@ defmodule MiniDiscord.ClientHandler do
         {:continue, salon}
 
       "/" <> _ ->
-        :gen_tcp.send(socket, "❌ Commande inconnue. Tape /help pour la liste des commandes.\r\n")
+        :gen_tcp.send(socket, "Commande inconnue\r\n")
         {:continue, salon}
 
       _ ->
         MiniDiscord.Salon.broadcast(salon, "[#{pseudo}] #{msg}\r\n")
         {:continue, salon}
+    end
+  end
+
+  defp preparer_salon(salon) do
+    case Registry.lookup(MiniDiscord.Registry, salon) do
+      [] ->
+        DynamicSupervisor.start_child(
+          MiniDiscord.SalonSupervisor,
+          {MiniDiscord.Salon, salon}
+        )
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp rejoindre_avec_authentification(socket, salon) do
+    case MiniDiscord.Salon.rejoindre(salon, self()) do
+      :ok ->
+        :ok
+
+      {:error, :mot_de_passe_incorrect} ->
+        demander_mot_de_passe(socket, salon)
+    end
+  end
+
+  defp demander_mot_de_passe(socket, salon) do
+    :gen_tcp.send(socket, "Mot de passe pour ##{salon} : ")
+
+    case :gen_tcp.recv(socket, 0) do
+      {:ok, mot_de_passe_brut} ->
+        mot_de_passe = String.trim(mot_de_passe_brut)
+
+        cond do
+          mot_de_passe == "" ->
+            :gen_tcp.send(socket, "Mot de passe vide, réessaie.\r\n")
+            demander_mot_de_passe(socket, salon)
+
+          true ->
+            case MiniDiscord.Salon.rejoindre(salon, self(), mot_de_passe) do
+              :ok ->
+                :ok
+
+              {:error, :mot_de_passe_incorrect} ->
+                :gen_tcp.send(socket, "Mot de passe incorrect, réessaie.\r\n")
+                demander_mot_de_passe(socket, salon)
+            end
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
